@@ -59,6 +59,15 @@ oneshot = true
 user = "root"
 groups = ["root", "system", "wakelock", "graphics"]
 
+# Boot control tells Skyward which slot starts next and lets it switch the
+# active slot. The stock recovery's init description names this service but
+# does not start it automatically, so run the same recovery-specific binary
+# here and wait until its AIDL service is registered.
+[[service]]
+path = "/system/bin/hw/android.hardware.boot-service.qti.recovery"
+init_service = "vendor.boot-qti"
+ready_service = "android.hardware.boot.IBootControl/default"
+
 # WLAN: the peach node in the device tree, driven by qca_cld3_peach_v2, the
 # one Peach driver the phone's own modules.load lists, as on the 17 Ultra.
 # Its cfg80211 asks for rfkill, one of the kernel's own modules in
@@ -81,12 +90,12 @@ probe = "http://connect.rom.miui.com/generate_204"
 server = "https://update.miui.com/updates/miotaV3.php"
 
 # The stock build the recovery is made on: the Chinese system's
-# OS3.0.310.0, whose full update package on the phone maker's own download
+# OS4.0.3.0, whose full update package on the phone maker's own download
 # server holds the recovery partition the recovery is built on top of.
 [stock]
 version = "OS4.0.3.0.XAFCNXM"
 package = "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS4.0.3.0.XAFCNXM/byron-ota_full-OS4.0.3.0.XAFCNXM-user-17.0-4c96d596f9.zip"
-recovery = "da70265665598f9d66e18bfe49d681b33da63d7ddb1a73375e8f1c7433710e25"
+recovery = "0542a553376a6a87e84cb7841f9588e7a609e9a6db1a507d9bc34116276a1b8f"
 
 # qcom-hv-haptics (qcom,hv-haptics in its dtbo), with the click made from
 # samples at the motor's resonant frequency as on the 17 Ultra. The

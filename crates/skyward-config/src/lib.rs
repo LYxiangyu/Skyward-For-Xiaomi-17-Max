@@ -335,6 +335,13 @@ pub struct Partitions {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Service {
     pub path: String,
+    /// The name Android init gives a service it already describes. Where
+    /// this is set, init starts and supervises the program so that its own
+    /// SELinux label and other service settings are kept; `path` identifies
+    /// the program for availability checks and for keeping mounted files in
+    /// memory.
+    #[serde(default)]
+    pub init_service: Option<String>,
     /// What the program is given after its own path, as init gives a
     /// service the words after its path.
     #[serde(default)]
@@ -530,6 +537,19 @@ impl DeviceConfig {
             );
         }
         for s in &cfg.services {
+            if let Some(name) = &s.init_service {
+                ensure!(!name.is_empty() && !name.contains(char::is_whitespace), "[[service]] {}: {name:?} is not an init service's name", s.path);
+                ensure!(
+                    s.args.is_empty()
+                        && s.libraries.is_empty()
+                        && !s.oneshot
+                        && s.user.is_none()
+                        && s.groups.is_empty()
+                        && s.capabilities.is_empty(),
+                    "[[service]] {}: init supplies the arguments, libraries, lifetime, account and capabilities",
+                    s.path
+                );
+            }
             ensure!(s.user.is_none() || !s.groups.is_empty(), "[[service]] {}: a program given a user is given its group too", s.path);
             for name in s.user.iter().chain(&s.groups) {
                 ensure!(!name.is_empty() && !name.contains(char::is_whitespace), "[[service]] {}: {name:?} is not an account's name", s.path);
@@ -788,6 +808,21 @@ mod tests {
     }
 
     #[test]
+    fn init_manages_a_service_only_with_its_own_process_settings() {
+        let base = "[device]\ncodename = \"x\"\n[[service]]\npath = \"/system/bin/hw/a\"\ninit_service = \"vendor.a\"\n";
+        let managed = DeviceConfig::parse(base).unwrap();
+        assert_eq!(managed.services[0].init_service.as_deref(), Some("vendor.a"));
+        for extra in [
+            "args = [\"a\"]\n",
+            "libraries = [\"/vendor/lib64\"]\n",
+            "oneshot = true\n",
+            "user = \"root\"\ngroups = [\"root\"]\n",
+        ] {
+            assert!(DeviceConfig::parse(&format!("{base}{extra}")).is_err());
+        }
+    }
+
+    #[test]
     fn a_program_runs_as_its_user_in_its_groups_keeping_named_capabilities() {
         let base = "[device]\ncodename = \"x\"\n[[service]]\npath = \"/odm/bin/a\"\n";
         let root = DeviceConfig::parse(base).unwrap();
@@ -845,7 +880,7 @@ mod tests {
             (include_str!("../../../devices/dada.toml"), "OS3.0.307.0.WOCCNXM"),
             (include_str!("../../../devices/haotian.toml"), "OS3.0.309.0.WOBCNXM"),
             (include_str!("../../../devices/xuanyuan.toml"), "OS3.0.314.0.WOACNXM"),
-            (include_str!("../../../devices/byron.toml"), "OS3.0.310.0.WAFCNXM"),
+            (include_str!("../../../devices/byron.toml"), "OS4.0.3.0.XAFCNXM"),
             (include_str!("../../../devices/zorn.toml"), "OS3.0.309.0.WOKCNXM"),
             (include_str!("../../../devices/miro.toml"), "OS3.0.305.0.WOMCNXM"),
             (include_str!("../../../devices/annibale.toml"), "OS3.0.307.0.WPKCNXM"),
@@ -886,6 +921,18 @@ mod tests {
         assert!(with("by-name/persist").is_err());
         assert!(with("").is_err());
         assert!(DeviceConfig::parse("[device]\ncodename = \"x\"\n").unwrap().partitions.mounted.is_empty(), "a phone may need none");
+    }
+
+    #[test]
+    fn byron_starts_its_recovery_boot_control_service() {
+        let cfg = DeviceConfig::parse(include_str!("../../../devices/byron.toml")).unwrap();
+        let boot = cfg
+            .services
+            .iter()
+            .find(|s| s.ready_service.as_deref() == Some("android.hardware.boot.IBootControl/default"))
+            .expect("byron starts its boot control service");
+        assert_eq!(boot.path, "/system/bin/hw/android.hardware.boot-service.qti.recovery");
+        assert_eq!(boot.init_service.as_deref(), Some("vendor.boot-qti"));
     }
 
     #[test]

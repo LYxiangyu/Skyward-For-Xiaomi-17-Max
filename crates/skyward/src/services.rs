@@ -34,7 +34,9 @@ const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 /// of the recovery service is waited on instead of started twice. A
 /// program that runs once is run to its end where it stands in that order.
 /// Each runs as the user, in the groups and with the capabilities the
-/// phone's own init gives it.
+/// phone's own init gives it. A service the configuration names as init's
+/// is asked of init instead, so init applies the SELinux label and process
+/// settings from its own description and supervises it.
 ///
 /// `libraries` is a directory of shared libraries every one of them may
 /// need, searched after whatever it names itself.
@@ -43,6 +45,11 @@ pub fn start(services: &[Service], libraries: Option<&Path>) -> Result<()> {
     for s in services {
         if !Path::new(&s.path).is_file() {
             bail!("{} is missing; is its partition mounted?", s.path);
+        }
+        if s.init_service.is_some() {
+            start_with_init(s)?;
+            ready(s)?;
+            continue;
         }
         let mut s = s.clone();
         if let Some(dir) = libraries {
@@ -61,6 +68,19 @@ pub fn start(services: &[Service], libraries: Option<&Path>) -> Result<()> {
         ready(&waiting)?;
     }
     Ok(())
+}
+
+/// Ask Android init to start a service it describes, unless it is already
+/// running, and wait until init says it is running. Init then applies the
+/// service's SELinux label and other process settings and supervises it.
+fn start_with_init(s: &Service) -> Result<()> {
+    let name = s.init_service.as_deref().context("an init-managed service has no name")?;
+    let state = format!("init.svc.{name}");
+    if skyward_sys::prop(&state).as_deref() != Some("running") {
+        skyward_sys::set_prop("ctl.start", name).with_context(|| format!("have init start {name}"))?;
+        skyward_sys::wait_prop(&state, "running", READY_TIMEOUT).with_context(|| format!("wait for init to start {name}"))?;
+    }
+    skyward_sys::kmsg(&format!("init service {name} runs {}", s.path))
 }
 
 /// Who a program runs as and what of root's it keeps, as the phone's own
