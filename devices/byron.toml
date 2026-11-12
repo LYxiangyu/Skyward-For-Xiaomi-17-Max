@@ -84,8 +84,8 @@ server = "https://update.miui.com/updates/miotaV3.php"
 # OS3.0.310.0, whose full update package on the phone maker's own download
 # server holds the recovery partition the recovery is built on top of.
 [stock]
-version = "OS3.0.310.0.WAFCNXM"
-package = "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS3.0.310.0.WAFCNXM/byron-ota_full-OS3.0.310.0.WAFCNXM-user-16.0-af218e1233.zip"
+version = "OS4.0.3.0.XAFCNXM"
+package = "https://bkt-sgp-miui-ota-update-alisgp.oss-ap-southeast-1.aliyuncs.com/OS4.0.3.0.XAFCNXM/byron-ota_full-OS4.0.3.0.XAFCNXM-user-17.0-4c96d596f9.zip"
 recovery = "da70265665598f9d66e18bfe49d681b33da63d7ddb1a73375e8f1c7433710e25"
 
 # qcom-hv-haptics (qcom,hv-haptics in its dtbo), with the click made from
