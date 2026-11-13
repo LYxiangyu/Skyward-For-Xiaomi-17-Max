@@ -15,9 +15,22 @@ density = 480
 
 [modules]
 sources = ["vendor_boot", "vendor_dlkm", "vendor", "system_dlkm"]
-# The touchscreen: Synaptics TouchComm over SPI behind Xiaomi's touch
-# layer, the one touch driver the phone's own modules.load lists.
-load = ["synaptics_tcm2"]
+# The QTI secure-element HAL uses /dev/nq-nci to identify the NXP chip;
+# NFC userspace is not needed for decryption.
+load = ["synaptics_tcm2", "nxp-nci"]
+
+[[owners]]
+user = "nfc"
+group = "nfc"
+mode = 0o660
+paths = ["/dev/nq-nci"]
+
+# NXP Weaver needs Android 17's native OMAPI broker, which neither the stock
+# recovery nor the mounted system carries.
+[[ramdisk_file]]
+path = "system/bin/se_omapi"
+source = "byron/se_omapi"
+mode = 0o755
 
 # As on the 17 Ultra, no init script of the phone's starts touch_report:
 # the touch feature service turns the controller's raw frames into
@@ -100,6 +113,50 @@ libraries = ["/system/lib64", "/vendor/lib64"]
 ready_service = "android.hardware.gatekeeper.IGatekeeper/default"
 user = "system"
 groups = ["system"]
+
+# Dropping from root to the Weaver account makes Android's linker ignore
+# LD_LIBRARY_PATH. Put the two libraries absent from the recovery in its
+# default library directory before starting Weaver. /system is the
+# recovery's ramdisk here; neither copy writes the installed system.
+[[service]]
+path = "/system/bin/cp"
+args = ["/mnt/system/system/lib64/libvndksupport.so", "/system/lib64/libvndksupport.so"]
+oneshot = true
+
+[[service]]
+path = "/system/bin/cp"
+args = ["/mnt/system/system/lib64/bootstrap/libdl_android.so", "/system/lib64/libdl_android.so"]
+oneshot = true
+
+[[service]]
+path = "/system/bin/chmod"
+args = ["0644", "/system/lib64/libvndksupport.so", "/system/lib64/libdl_android.so"]
+oneshot = true
+
+# QTI's HAL opens the NXP secure element through GPQeSE. The NXP NFC daemon
+# is deliberately not started: the kernel node is enough for chip detection.
+[[service]]
+path = "/vendor/bin/hw/android.hardware.secure_element-service.qti"
+libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw", "/odm/lib64"]
+ready_service = "android.hardware.secure_element.ISecureElement/eSE1"
+description = "/odm/etc/vintf/manifest/nfc2-service-nxp.xml"
+
+# The native broker exposes the eSE1 reader through OMAPI to Weaver.
+[[service]]
+path = "/system/bin/se_omapi"
+libraries = ["/system/lib64", "/vendor/lib64", "/vendor/lib64/hw", "/odm/lib64"]
+ready_service = "android.se.omapi.ISecureElementService/default"
+description = "/vendor/etc/vintf/manifest/secure_element-service.xml"
+
+# The screen-lock protector is kept by the phone's NXP secure element. Its
+# VINTF description spells the interface and instance in separate elements,
+# so name the file explicitly rather than relying on the compact-name match.
+[[service]]
+path = "/odm/bin/hw/android.hardware.weaver-service.nxp-qti"
+ready_service = "android.hardware.weaver.IWeaver/default"
+description = "/odm/etc/vintf/manifest/android.hardware.weaver-service.nxp.xml"
+user = "vendor_nxp_weaver"
+groups = ["vendor_nxp_weaver"]
 
 # Boot control tells Skyward which slot starts next and lets it switch the
 # active slot. The stock recovery's init description names this service but

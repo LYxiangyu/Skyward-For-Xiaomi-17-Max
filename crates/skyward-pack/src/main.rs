@@ -114,8 +114,8 @@ fn main() -> Result<()> {
             if let Some(e) = rd.entries.iter().find(|e| e.name == "FFiles" || e.name.starts_with("twres")) {
                 anyhow::bail!("{} holds {}, which is not a stock recovery", stock.display(), e.name);
             }
-            let read = |p: &PathBuf| std::fs::read(p).with_context(|| format!("read {}", p.display()));
-            skyward_config::DeviceConfig::load(&config)?;
+            let read = |p: &Path| std::fs::read(p).with_context(|| format!("read {}", p.display()));
+            let cfg = skyward_config::DeviceConfig::load(&config)?;
             rd.replace(paths::RECOVERY, read(&binary)?)?;
             // Install scripts look for the commands a stock recovery lacks
             // among its programs, and its unzip there too, a link to ziptool
@@ -129,6 +129,10 @@ fn main() -> Result<()> {
             rd.add(paths::FONT, 0o644, read(&font)?)?;
             rd.add(paths::MONO, 0o644, read(&mono)?)?;
             rd.add(paths::MONO_LICENSE, 0o644, read(&mono_license)?)?;
+            let config_dir = config.parent().unwrap_or_else(|| Path::new("."));
+            for file in &cfg.ramdisk_files {
+                rd.add(&file.path, file.mode, read(&config_dir.join(&file.source))?)?;
+            }
             // A stock ramdisk may run logd without any scheduling profiles,
             // and logd stops as soon as it cannot find the one it asks for.
             if rd.find(paths::TASK_PROFILES).is_none() {

@@ -58,6 +58,10 @@ pub struct DeviceConfig {
     pub firmware: Option<FirmwarePartition>,
     #[serde(default, rename = "service")]
     pub services: Vec<Service>,
+    /// Extra regular files put in the recovery ramdisk when an installed
+    /// partition does not carry a recovery-time helper the device needs.
+    #[serde(default, rename = "ramdisk_file")]
+    pub ramdisk_files: Vec<RamdiskFile>,
     /// The vibration motor's click, on phones that have one.
     #[serde(default)]
     pub haptics: Option<Haptics>,
@@ -84,6 +88,16 @@ pub struct DeviceConfig {
     /// The stock build the recovery is made on.
     #[serde(default)]
     pub stock: Option<Stock>,
+}
+
+/// A regular file copied beside Skyward while a recovery image is built.
+/// `source` is relative to the device configuration file and `path` is
+/// relative to the ramdisk root.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct RamdiskFile {
+    pub path: String,
+    pub source: String,
+    pub mode: u32,
 }
 
 /// The stock build a recovery is made on: the phone maker's full update
@@ -528,6 +542,15 @@ impl DeviceConfig {
         for name in &cfg.partitions.mounted {
             ensure!(!name.is_empty() && !name.contains('/'), "[partitions] mounted: {name} is not a partition's name");
         }
+        for file in &cfg.ramdisk_files {
+            let path = Path::new(&file.path);
+            let plain_path = path.components().all(|c| matches!(c, std::path::Component::Normal(_)));
+            let source = Path::new(&file.source);
+            let plain_source = source.components().all(|c| matches!(c, std::path::Component::Normal(_)));
+            ensure!(plain_path && !file.path.is_empty(), "[[ramdisk_file]] path: {} is not a path below the ramdisk root", file.path);
+            ensure!(plain_source && !file.source.is_empty(), "[[ramdisk_file]] source: {} is not a path beside the device configuration", file.source);
+            ensure!(file.mode <= 0o7777, "[[ramdisk_file]] {}: mode {:#o} has bits outside a file's permissions", file.path, file.mode);
+        }
         for s in cfg.services.iter().filter(|s| s.oneshot) {
             let waits = s.ready_property.is_some() || s.ready_service.is_some() || s.ready_hardware_service.is_some();
             ensure!(
@@ -924,27 +947,59 @@ mod tests {
     }
 
     #[test]
+    fn a_ramdisk_file_stays_below_both_roots() {
+        let with = |path: &str, source: &str, mode: &str| {
+            DeviceConfig::parse(&format!(
+                "[device]\ncodename = \"x\"\n[[ramdisk_file]]\npath = \"{path}\"\nsource = \"{source}\"\nmode = {mode}\n"
+            ))
+        };
+        assert!(with("system/bin/helper", "x/helper", "0o755").is_ok());
+        assert!(with("/system/bin/helper", "x/helper", "0o755").is_err());
+        assert!(with("system/../helper", "x/helper", "0o755").is_err());
+        assert!(with("system/bin/helper", "../helper", "0o755").is_err());
+        assert!(with("system/bin/helper", "x/helper", "0o10000").is_err());
+    }
+
+    #[test]
     fn byron_starts_its_default_security_services_and_boot_control() {
         let cfg = DeviceConfig::parse(include_str!("../../../devices/byron.toml")).unwrap();
-        let [post_boot, qsee, mink, keymint, gatekeeper, boot] = &cfg.services[..] else { panic!("six programs") };
-        assert!(post_boot.oneshot);
-        assert_eq!(qsee.path, "/vendor/bin/qseecomd");
-        assert_eq!(qsee.ready_property.as_deref(), Some("vendor.sys.listeners.registered"));
-        assert_eq!(qsee.groups, ["root", "drmrpc"]);
-        assert_eq!(mink.path, "/vendor/bin/hlosminkdaemon");
-        assert_eq!(mink.capabilities, ["WAKE_ALARM", "BLOCK_SUSPEND"]);
-        assert_eq!(keymint.path, "/vendor/bin/hw/android.hardware.security.onekeymint-service-qti");
+        assert_eq!(cfg.modules.load, ["synaptics_tcm2", "nxp-nci"]);
+        let [nq] = &cfg.owners[..] else { panic!("one device-node owner") };
+        assert_eq!((nq.user.as_str(), nq.group.as_str(), nq.mode, &nq.paths[..]), ("nfc", "nfc", 0o660, &["/dev/nq-nci".to_string()][..]));
+        let [broker] = &cfg.ramdisk_files[..] else { panic!("one extra ramdisk file") };
+        assert_eq!((broker.path.as_str(), broker.source.as_str(), broker.mode), ("system/bin/se_omapi", "byron/se_omapi", 0o755));
+
+        let paths: Vec<&str> = cfg.services.iter().map(|s| s.path.as_str()).collect();
         assert_eq!(
-            keymint.ready_service.as_deref(),
-            Some("android.hardware.security.keymint.IKeyMintDevice/default")
+            paths,
+            [
+                "/vendor/bin/sh",
+                "/vendor/bin/qseecomd",
+                "/vendor/bin/hlosminkdaemon",
+                "/vendor/bin/hw/android.hardware.security.onekeymint-service-qti",
+                "/vendor/bin/hw/android.hardware.gatekeeper-rust-service-qti",
+                "/system/bin/cp",
+                "/system/bin/cp",
+                "/system/bin/chmod",
+                "/vendor/bin/hw/android.hardware.secure_element-service.qti",
+                "/system/bin/se_omapi",
+                "/odm/bin/hw/android.hardware.weaver-service.nxp-qti",
+                "/system/bin/hw/android.hardware.boot-service.qti.recovery",
+            ]
         );
+        let [post_boot, qsee, mink, keymint, gatekeeper, copy_vndk, copy_dl, open_libraries, element, omapi, weaver, boot] = &cfg.services[..] else { panic!("twelve programs") };
+        assert!(post_boot.oneshot);
+        assert_eq!(qsee.ready_property.as_deref(), Some("vendor.sys.listeners.registered"));
+        assert_eq!(mink.capabilities, ["WAKE_ALARM", "BLOCK_SUSPEND"]);
+        assert_eq!(keymint.ready_service.as_deref(), Some("android.hardware.security.keymint.IKeyMintDevice/default"));
         assert!(keymint.registers.contains(&"android.hardware.security.secureclock.ISecureClock/default".to_string()));
         assert!(keymint.registers.contains(&"android.hardware.security.sharedsecret.ISharedSecret/default".to_string()));
-        assert_eq!(
-            gatekeeper.ready_service.as_deref(),
-            Some("android.hardware.gatekeeper.IGatekeeper/default")
-        );
-        assert_eq!(boot.path, "/system/bin/hw/android.hardware.boot-service.qti.recovery");
+        assert_eq!(gatekeeper.ready_service.as_deref(), Some("android.hardware.gatekeeper.IGatekeeper/default"));
+        assert!([copy_vndk, copy_dl, open_libraries].iter().all(|s| s.oneshot));
+        assert_eq!(element.ready_service.as_deref(), Some("android.hardware.secure_element.ISecureElement/eSE1"));
+        assert_eq!(omapi.ready_service.as_deref(), Some("android.se.omapi.ISecureElementService/default"));
+        assert_eq!(weaver.ready_service.as_deref(), Some("android.hardware.weaver.IWeaver/default"));
+        assert_eq!(weaver.user.as_deref(), Some("vendor_nxp_weaver"));
         assert_eq!(boot.init_service.as_deref(), Some("vendor.boot-qti"));
     }
 
