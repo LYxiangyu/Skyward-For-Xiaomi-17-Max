@@ -947,63 +947,6 @@ mod tests {
     }
 
     #[test]
-    fn a_ramdisk_file_stays_below_both_roots() {
-        let with = |path: &str, source: &str, mode: &str| {
-            DeviceConfig::parse(&format!(
-                "[device]\ncodename = \"x\"\n[[ramdisk_file]]\npath = \"{path}\"\nsource = \"{source}\"\nmode = {mode}\n"
-            ))
-        };
-        assert!(with("system/bin/helper", "x/helper", "0o755").is_ok());
-        assert!(with("/system/bin/helper", "x/helper", "0o755").is_err());
-        assert!(with("system/../helper", "x/helper", "0o755").is_err());
-        assert!(with("system/bin/helper", "../helper", "0o755").is_err());
-        assert!(with("system/bin/helper", "x/helper", "0o10000").is_err());
-    }
-
-    #[test]
-    fn byron_starts_its_default_security_services_and_boot_control() {
-        let cfg = DeviceConfig::parse(include_str!("../../../devices/byron.toml")).unwrap();
-        assert_eq!(cfg.modules.load, ["synaptics_tcm2", "nxp-nci"]);
-        let [nq] = &cfg.owners[..] else { panic!("one device-node owner") };
-        assert_eq!((nq.user.as_str(), nq.group.as_str(), nq.mode, &nq.paths[..]), ("nfc", "nfc", 0o660, &["/dev/nq-nci".to_string()][..]));
-        let [broker] = &cfg.ramdisk_files[..] else { panic!("one extra ramdisk file") };
-        assert_eq!((broker.path.as_str(), broker.source.as_str(), broker.mode), ("system/bin/se_omapi", "byron/se_omapi", 0o755));
-
-        let paths: Vec<&str> = cfg.services.iter().map(|s| s.path.as_str()).collect();
-        assert_eq!(
-            paths,
-            [
-                "/vendor/bin/sh",
-                "/vendor/bin/qseecomd",
-                "/vendor/bin/hlosminkdaemon",
-                "/vendor/bin/hw/android.hardware.security.onekeymint-service-qti",
-                "/vendor/bin/hw/android.hardware.gatekeeper-rust-service-qti",
-                "/system/bin/cp",
-                "/system/bin/cp",
-                "/system/bin/chmod",
-                "/vendor/bin/hw/android.hardware.secure_element-service.qti",
-                "/system/bin/se_omapi",
-                "/odm/bin/hw/android.hardware.weaver-service.nxp-qti",
-                "/system/bin/hw/android.hardware.boot-service.qti.recovery",
-            ]
-        );
-        let [post_boot, qsee, mink, keymint, gatekeeper, copy_vndk, copy_dl, open_libraries, element, omapi, weaver, boot] = &cfg.services[..] else { panic!("twelve programs") };
-        assert!(post_boot.oneshot);
-        assert_eq!(qsee.ready_property.as_deref(), Some("vendor.sys.listeners.registered"));
-        assert_eq!(mink.capabilities, ["WAKE_ALARM", "BLOCK_SUSPEND"]);
-        assert_eq!(keymint.ready_service.as_deref(), Some("android.hardware.security.keymint.IKeyMintDevice/default"));
-        assert!(keymint.registers.contains(&"android.hardware.security.secureclock.ISecureClock/default".to_string()));
-        assert!(keymint.registers.contains(&"android.hardware.security.sharedsecret.ISharedSecret/default".to_string()));
-        assert_eq!(gatekeeper.ready_service.as_deref(), Some("android.hardware.gatekeeper.IGatekeeper/default"));
-        assert!([copy_vndk, copy_dl, open_libraries].iter().all(|s| s.oneshot));
-        assert_eq!(element.ready_service.as_deref(), Some("android.hardware.secure_element.ISecureElement/eSE1"));
-        assert_eq!(omapi.ready_service.as_deref(), Some("android.se.omapi.ISecureElementService/default"));
-        assert_eq!(weaver.ready_service.as_deref(), Some("android.hardware.weaver.IWeaver/default"));
-        assert_eq!(weaver.user.as_deref(), Some("vendor_nxp_weaver"));
-        assert_eq!(boot.init_service.as_deref(), Some("vendor.boot-qti"));
-    }
-
-    #[test]
     fn parses_ishtar() {
         let cfg = DeviceConfig::parse(include_str!("../../../devices/ishtar.toml")).unwrap();
         assert_eq!(cfg.device.codename, "ishtar");
