@@ -924,13 +924,26 @@ mod tests {
     }
 
     #[test]
-    fn byron_starts_its_recovery_boot_control_service() {
+    fn byron_starts_its_default_security_services_and_boot_control() {
         let cfg = DeviceConfig::parse(include_str!("../../../devices/byron.toml")).unwrap();
-        let boot = cfg
-            .services
-            .iter()
-            .find(|s| s.ready_service.as_deref() == Some("android.hardware.boot.IBootControl/default"))
-            .expect("byron starts its boot control service");
+        let [post_boot, qsee, mink, keymint, gatekeeper, boot] = &cfg.services[..] else { panic!("six programs") };
+        assert!(post_boot.oneshot);
+        assert_eq!(qsee.path, "/vendor/bin/qseecomd");
+        assert_eq!(qsee.ready_property.as_deref(), Some("vendor.sys.listeners.registered"));
+        assert_eq!(qsee.groups, ["root", "drmrpc"]);
+        assert_eq!(mink.path, "/vendor/bin/hlosminkdaemon");
+        assert_eq!(mink.capabilities, ["WAKE_ALARM", "BLOCK_SUSPEND"]);
+        assert_eq!(keymint.path, "/vendor/bin/hw/android.hardware.security.onekeymint-service-qti");
+        assert_eq!(
+            keymint.ready_service.as_deref(),
+            Some("android.hardware.security.keymint.IKeyMintDevice/default")
+        );
+        assert!(keymint.registers.contains(&"android.hardware.security.secureclock.ISecureClock/default".to_string()));
+        assert!(keymint.registers.contains(&"android.hardware.security.sharedsecret.ISharedSecret/default".to_string()));
+        assert_eq!(
+            gatekeeper.ready_service.as_deref(),
+            Some("android.hardware.gatekeeper.IGatekeeper/default")
+        );
         assert_eq!(boot.path, "/system/bin/hw/android.hardware.boot-service.qti.recovery");
         assert_eq!(boot.init_service.as_deref(), Some("vendor.boot-qti"));
     }
